@@ -1,5 +1,6 @@
-import tensorflow as tf
-import numpy as np
+# import tensorflow as tf
+import tensorflow.compat.v1 as tf
+tf.disable_v2_behavior()
 
 def leaky_relu(x, alpha=0.01):
     return tf.maximum(alpha * x, x)
