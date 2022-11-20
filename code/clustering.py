@@ -1,47 +1,121 @@
 from file_io import load_sent
-
-PATH = '../data/yelp/sentiment'
-train0 = load_sent(PATH + '.train' + '.0')
-# train1 = load_sent(PATH + '.train' + '.1')
-dev0 = load_sent(PATH + '.dev' + '.0')
-# dev1 = load_sent(PATH + '.dev' + '.1')
-test0 = load_sent(PATH + '.test' + '.0')
-# test1 = load_sent(PATH + '.test' + '.1')
-
 from sklearn.feature_extraction.text import TfidfVectorizer
-import nltk
-nltk.download('stopwords')
-from nltk.corpus import stopwords
-
-stop_words = stopwords.words('english')
-vectorizer = TfidfVectorizer(
-    stop_words=stop_words,
-    max_features=10000,
-    max_df=0.5,
-    use_idf=True,
-    ngram_range=(1,3)
-)
-fitting_data = [' '.join(sent) for sent in [train0, dev0]]
-X = vectorizer.fit_transform(fitting_data)
-terms = vectorizer.get_feature_names()
-
+from sklearn.decomposition import TruncatedSVD
+# import nltk
+# nltk.download('stopwords')
+# from nltk.corpus import stopwords
 from sklearn.cluster import KMeans
-num_clusters = 10
-km = KMeans(n_clusters=num_clusters)
-km.fit(X)
-clusters = km.labels_.tolist()
+import numpy as np
+from tqdm import tqdm
+import matplotlib.pyplot as plt
+from sklearn.metrics import classification_report
+from sklearn.metrics import accuracy_score, f1_score
+from functools import partial
+from sklearn.neighbors import KNeighborsClassifier
 
-# from sklearn.utils.extmath import randomized_svd
-# U, Sigma, VT = randomized_svd(X, n_components=10, n_iter=100, random_state=122)
-# for i, comp in enumerate(VT):
-#     terms_comp = zip(terms, comp)
-#     sorted_terms = sorted(terms_comp, key= lambda x:x[1], reverse=True)[:7]
-#     print("Concept "+str(i)+": ")
-#     for t in sorted_terms:
-#         print(t[0])
-#     print(" ")
 
-test_data = [' '.join(sent) for sent in [test0]]
-X_test = vectorizer.transform(test_data)
-test_clusters = km.predict(X_test)
 
+
+class Evaluator:
+    def __init__(
+        self,
+        train_data,
+        num_clusters=10,
+    ):
+        # stop_words = stopwords.words('english')
+        self.vectorizer = TfidfVectorizer(
+            min_df=0.01,
+            use_idf=True,
+        )
+        X = self.vectorizer.fit_transform(train_data)
+        self.pca = TruncatedSVD(n_components=num_clusters)
+        X_pca = self.pca.fit_transform(X)
+        self.km = KMeans(n_clusters=num_clusters)
+        self.km.fit(X_pca)
+        # self.knn = KNeighborsClassifier(n_neighbors=3)
+        # self.knn.fit(X_pca, self.km.labels_)
+
+
+
+    def get_clusters(
+        self,
+        data
+    ):
+        X = self.vectorizer.transform(data)
+        X_pca = self.pca.transform(X)
+        # return self.knn.predict(X_pca)
+        return self.km.predict(X_pca)
+
+
+    def evaluate(
+        self,
+        source,
+        target,
+        print_table=False,
+        metric=accuracy_score,
+    ):
+        source_clusters = self.get_clusters(source)
+        target_clusters = self.get_clusters(target)
+        if print_table:
+            print(classification_report(source_clusters, target_clusters))
+        return (np.array(source_clusters)==np.array(target_clusters)).mean()
+
+
+
+
+def load_data(path):
+    return [' '.join(sent) for sent in load_sent(path)]
+
+
+def bidirectional_eval(
+    train_data,
+    test_data,
+    tsf_test_data,
+    num_clusters,
+    print_table=False,
+    metric=accuracy_score,
+):
+    evaluator0 = Evaluator(train_data=train_data[0], num_clusters=num_clusters)
+    evaluator1 = Evaluator(train_data=train_data[1], num_clusters=num_clusters)
+    return evaluator0.evaluate(test_data[0], tsf_test_data[0], print_table=print_table, metric=metric), \
+           evaluator1.evaluate(test_data[1], tsf_test_data[1], print_table=print_table, metric=metric)
+
+
+def plot_acc_cluster(file_path, *data, **args):
+    cluster_counts = [2,5,10,20,50,100]
+    accuracies = [bidirectional_eval(*data, num_clusters=i, **args) for i in tqdm(cluster_counts)]
+    accuracies = list(zip(*accuracies))
+    plt.plot(cluster_counts, accuracies[0], label='0')
+    plt.plot(cluster_counts, accuracies[1], label='1')
+    plt.legend()
+    plt.xlabel('# clusters')
+    plt.ylabel('Accuracy')
+    plt.savefig(file_path)
+
+
+
+
+def main():
+    source_dir = '../data/yelp/'
+    target_dir = '../tmp/'
+    data_name = 'sentiment'
+    train_key = 'train'
+    dev_key = 'dev'
+    test_key = 'test'
+    tsf_key = 'tsf'
+
+    train_data, test_data, tsf_test_data = {}, {}, {}
+    for i in range(2):
+        train_data[i] = load_data(source_dir+data_name+'.'+train_key+'.'+str(i)) + \
+                        load_data(source_dir+data_name+'.'+dev_key+'.'+str(i))
+        test_data[i] = load_data(source_dir+data_name+'.'+test_key+'.'+str(i))
+        tsf_test_data[i] = load_data(target_dir+data_name+'.'+test_key+'.'+str(i)+'.'+tsf_key)
+    data = [train_data, test_data, tsf_test_data]
+
+    plot_acc_cluster('../f1.jpg', *data, metric=partial(f1_score, average='macro'))
+    # bidirectional_eval(*data, num_clusters=10, print_table=True)
+
+
+
+if __name__=='__main__':
+    main()

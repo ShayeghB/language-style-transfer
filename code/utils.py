@@ -26,7 +26,7 @@ def makeup(_x, n):
     return x
 
 def reorder(order, _x):
-    x = range(len(_x))
+    x = list(range(len(_x)))
     for i, a in zip(order, _x):
         x[i] = a
     return x
